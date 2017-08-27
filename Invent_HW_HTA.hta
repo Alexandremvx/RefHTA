@@ -1,0 +1,514 @@
+<html>
+	<head>
+		<title>Invent HW</title>
+		<HTA:APPLICATION id="IHW"
+		applicationName="Invent HW - HTA"
+		border="thin"
+		borderStyle="normal"
+		caption="yes"
+		icon="Icon.ico"
+		maximizeButton="no"
+		minimizeButton="yes"
+		showInTaskbar="yes"
+		windowState="normal"
+		innerBorder="no"
+		navigable="yes"
+		scroll="no"
+		scrollFlat="yes"
+		singleInstance="yes"
+		sysMenu="yes"
+      contextMenu="no"
+		selection="no"
+		version="0.95b" />
+
+<script language="VBScript">
+
+Class objWMI
+ Public Erro
+ Public ErroDesc
+ Public Hostname
+ Public Dominio
+ Public Fabricante
+ Public Modelo
+ Public Memoria
+ Public nCPU
+ Public CPU
+ Public SerialNumber
+ Public SistemaOperacional
+ Public ServicePack
+ Public IPAddress
+ Public AVS
+ Public WSUS
+ Public Admins
+End Class
+
+Sub Window_onLoad
+ Set objFSO=CreateObject("Scripting.FileSystemObject")
+ Set objShell = CreateObject("WScript.Shell")
+ objShell.CurrentDirectory = objFSO.GetFile(mid(document.url,8)).parentfolder
+ window.resizeTo 450,650
+ document.title = IHW.applicationName & " Ver "& IHW.version
+ document.getElementById("nomeRelatorio").value = formatName("Invent HW " & Now())
+ logMsg 0, IHW.applicationName & " Iniciado."
+End Sub
+
+' KB - Alexandre Lopes Fernandes, faz inventário de maquinas Windows
+' Mofificado e adaptado por André Leite Plumari
+Function getWMI(strInput,strUser,strPassword)
+ On Error Resume Next
+ Const HKEY_LOCAL_MACHINE = &H80000002
+ Set getWMI = New objWMI
+ Set objWMIService = GetObject("winmgmts:\\.\root\cimv2")
+ Set objWbemLocator = CreateObject("WbemScripting.SWbemLocator")
+
+ strNamespace = "root\cimv2"
+ Err.Clear
+
+ Set objWMIService = objwbemLocator.ConnectServer (strInput, strNamespace, strUser, strPassword)
+
+ getWMI.ErroDesc = Err.Description 
+ getWMI.Erro = Err.Number
+ If Err.Number = 0 Then
+  
+  Set colCSes = objWMIService.ExecQuery("SELECT * FROM Win32_ComputerSystem")
+  For Each objCS In colCSes
+   getWMI.Hostname = objCS.Name
+   getWMI.Dominio = objCS.Domain
+   getWMI.Fabricante = objCS.Manufacturer
+   getWMI.Modelo = objCS.Model
+   getWMI.Memoria = Round(((objCS.TotalPhysicalMemory)/1073741824),1)
+   getWMI.nCPU = objCS.NumberOfProcessors
+  Next
+  
+  Set colProcessors = objWMIService.ExecQuery("Select * from Win32_Processor")
+  For Each objProcessor in colProcessors
+   getWMI.CPU = Trim(objProcessor.Name)
+  Next
+
+  Set colBios = objWMIService.ExecQuery("SELECT * FROM Win32_BIOS")
+  For Each objBios In colBios
+   getWMI.SerialNumber = objBios.SerialNumber
+  Next
+
+  Set colOSes = objWMIService.ExecQuery("Select * from Win32_OperatingSystem")
+  For Each objOS in colOSes
+   getWMI.SistemaOperacional = objOS.Caption
+   getWMI.ServicePack = objOS.ServicePackMajorVersion
+  Next
+
+  strIP = ""
+  Set colNetwork = objWMIService.ExecQuery("Select * from Win32_NetworkAdapterConfiguration")
+  For Each objNetwork in colNetwork
+   strIP2 = "(IP:" & Join(objNetwork.IPAddress, ",") & ",Mask:" & Join(objNetwork.IPSubnet, ",") & ",GW:" & Join(objNetwork.DefaultIPGateway, ",") & ")"
+   If  strIP <> strIP2 then
+    strIP = "(IP:" & Join(objNetwork.IPAddress, ",") & ",Mask:" & Join(objNetwork.IPSubnet, ",") & ",GW:" & Join(objNetwork.DefaultIPGateway, ",") & ")"
+    getWMI.IPAddress = 	getWMI.IPAddress & strIP
+   End if
+  Next
+
+  Set colAV = objWMIService.ExecQuery ("Select * from Win32_Service Where Name = 'smcservice'")
+  If colAV.Count > 0  Then
+   For Each objAV in colAV
+    If objAV.State = "Stopped" Then
+     AV ="Parado"
+    ElseIf objAV.State ="Running" Then
+     AV ="OK"
+    End If
+   Next
+  Else
+   AV ="Não Instalado"
+  End If
+  getWMI.AVS = AV
+
+  strNamespaceReg = "root\DEFAULT"
+  strEntry1a = "DisplayName"
+  strEntry1b = "QuietDisplayName"
+  Set objWbemLocatorReg = CreateObject("WbemScripting.SWbemLocator")
+  Err.Clear
+  Set objWMIServiceReg = objwbemLocatorReg.ConnectServer (strInput, strNamespaceReg, strUser, strPassword)
+  objWMIServiceReg.Security_.impersonationlevel = 3
+  Set objReg = objWMIServiceReg.Get("StdRegProv")
+  strKey = "SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU\"
+  strValueName = "UseWUServer"
+  objReg.GetDWORDValue HKEY_LOCAL_MACHINE,strKey,strValueName,DWValue
+  WSUS = DWvalue
+  Set colWSUS = objWMIService.ExecQuery ("Select * from Win32_Service Where Name = 'wuauserv'")
+  If WSUS = "1" Then
+   For Each objWSUS in colWSUS
+    If objWSUS.State = "Stopped" Then
+     WSUS ="Parado"
+    ElseIf objWSUS.State ="Running" Then
+     WSUS ="OK"
+    End If
+   Next
+  Else
+   WSUS ="Não Configurado"
+  End If
+  getWMI.WSUS = WSUS
+
+  strQueryGroup =  "select partcomponent from win32_groupuser where groupcomponent = ""\\\\" & getWMI.Hostname & "\\root\\cimv2:Win32_Group.Domain=\""" & getWMI.Hostname & "\"",Name=\""Administradores\"""""
+  Set colAdmMember = objWMIService.ExecQuery(strQueryGroup)
+  For Each objMember in colAdmMember
+   strField = objMember.PartComponent
+   strField = mid(strField, instr(1, strField, chr(58)) + 1)
+   If Instr(1, strField, Chr(92), 1) > 0 Then strField = Replace(strField, Chr(92), Chr(92) & Chr(92), 1, -1, 1)
+   If Instr(1, strField, Chr(34), 1) > 0 Then strField = Replace(strField, Chr(34), Chr(39), 1, -1, 1)
+   strField = Replace(strField, "Win32_UserAccount.Domain='","")
+   strField = Replace(strField, "Win32_Group.Domain='","")
+   strField = Replace(strField, "',Name='","\")
+   strField = Replace(strField, "'","")
+   getWMI.Admins = getWMI.Admins & strField & ","
+  Next
+
+ End If
+End Function
+
+Function Base64Encode(sText)
+ Dim oXML, oNode
+ Set oXML = CreateObject("Msxml2.DOMDocument.3.0")
+ Set oNode = oXML.CreateElement("base64")
+ oNode.dataType = "bin.base64"
+ oNode.nodeTypedValue =Stream_StringToBinary(sText)
+ Base64Encode = oNode.text
+ Set oNode = Nothing
+ Set oXML = Nothing
+End Function
+
+Function Base64Decode(ByVal vCode)
+ Dim oXML, oNode
+ Set oXML = CreateObject("Msxml2.DOMDocument.3.0")
+ Set oNode = oXML.CreateElement("base64")
+ oNode.dataType = "bin.base64"
+ oNode.text = vCode
+ Base64Decode = Stream_BinaryToString(oNode.nodeTypedValue)
+ Set oNode = Nothing
+ Set oXML = Nothing
+End Function
+
+'Stream_StringToBinary Function
+'2003 Antonin Foller, http://www.motobit.com
+'Text - string parameter To convert To binary data
+Function Stream_StringToBinary(Text)
+ Const adTypeText = 2
+ Const adTypeBinary = 1
+ 'Create Stream object
+ Dim BinaryStream 'As New Stream
+ Set BinaryStream = CreateObject("ADODB.Stream")
+ 'Specify stream type - we want To save text/string data.
+ BinaryStream.Type = adTypeText
+ 'Specify charset For the source text (unicode) data.
+ BinaryStream.CharSet = "us-ascii"
+ 'Open the stream And write text/string data To the object
+ BinaryStream.Open
+ BinaryStream.WriteText Text
+ 'Change stream type To binary
+ BinaryStream.Position = 0
+ BinaryStream.Type = adTypeBinary
+ 'Ignore first two bytes - sign of
+ BinaryStream.Position = 0
+ 'Open the stream And get binary data from the object
+ Stream_StringToBinary = BinaryStream.Read
+ Set BinaryStream = Nothing
+End Function
+
+'Stream_BinaryToString Function
+'2003 Antonin Foller, http://www.motobit.com
+'Binary - VT_UI1 | VT_ARRAY data To convert To a string
+Function Stream_BinaryToString(Binary)
+ Const adTypeText = 2
+ Const adTypeBinary = 1
+ 'Create Stream object
+ Dim BinaryStream 'As New Stream
+ Set BinaryStream = CreateObject("ADODB.Stream")
+ 'Specify stream type - we want To save binary data.
+ BinaryStream.Type = adTypeBinary
+ 'Open the stream And write binary data To the object
+ BinaryStream.Open
+ BinaryStream.Write Binary
+ 'Change stream type To text/string
+ BinaryStream.Position = 0
+ BinaryStream.Type = adTypeText
+ 'Specify charset For the output text (unicode) data.
+ BinaryStream.CharSet = "us-ascii"
+ 'Open the stream And get text/string data from the object
+ Stream_BinaryToString = BinaryStream.ReadText
+ Set BinaryStream = Nothing
+End Function
+
+Sub addWMIUser
+ set users = document.getElementById("WMIUsers")
+ set WMIUser = document.getElementById("WMIUser")
+ set WMIPass = document.getElementById("WMIPass")
+ if WMIUser.value <> Empty AND WMIPass.value <> Empty then
+  set usr = document.createElement("option")
+  usr.text = WMIUser.value
+  usr.value = Base64Encode(WMIPass.value)
+  users.add(usr)
+  users.selectedIndex = users.length-1
+  logMsg 0, "usuário '" & usr.text & "' adicionado."
+  WMIPass.value = Empty
+  WMIUser.value = Empty
+ else
+  logMsg 1,"Usuário e/ou Senha em branco"
+ end if
+ WMIUser.focus
+End Sub
+
+Sub delWMIUser
+ set WMIUsers = document.getElementById("WMIUsers")
+ if WMIUsers.selectedIndex >-1 then
+  logMsg 0, "Usuário '" & WMIUsers(WMIUsers.selectedIndex).text & "' removido."
+  WMIUsers.remove(WMIUsers.selectedIndex)
+ else
+  logMsg 1,"Nenhum usuário para remover"
+ end if
+End Sub
+
+Private Sub logMsg(erro,msg)
+ set saida = document.getElementById("logOut")
+ if erro = 0 then logClass="logOutInfo"
+ if erro = 1 then logClass="logOutErro"
+ hora = "["& FormatDateTime(now(),3) &"] "
+ msgH = "<span class='"&logClass&"'>" 
+ msgT = "</span>"
+ mensagem = msgH & hora & msg & msgT
+ saida.innerHTML = mensagem & saida.innerHTML 
+End Sub
+
+Function formatName(strText)
+ delChrs=Array(92,47,58,42,63,34,60,62,124)
+ fText = Replace(strText," ","_")
+ fText = Replace(fText,"/","-")
+ For Each dChr In delChrs
+  fText = Replace(fText,Chr(dChr),"")
+ Next
+ formatName = fText
+End Function
+
+Function disableGUI(stat)
+ formIDs = Array("hosts","WMIUser","WMIPass","WMIAddUser","WMIUsers","WMIDelUser","nomeRelatorio","runRelatorio")
+ For Each fID In formIDs
+  document.getElementById(fID).disabled = stat
+ Next
+ disableGUI = stat
+End Function
+
+Function formCheck()
+ Set objFSO = CreateObject("Scripting.FileSystemObject")
+ formCheck = true
+
+ inputFile = document.getElementbyId("hosts").value
+ If not (objFSO.FileExists(inputFile)) then
+  formCheck = false
+  logMsg 1,"Arquivo não encontrado!"
+ Else
+  inputFileSize = objFSO.getFile(inputFile).size
+  if inputFileSize > 1048576 then
+   formCheck = false
+   inputFileSizeMB = formatnumber(inputFileSize/1024/1024,2)&"MB"
+   logMsg 1,"Arquivo muito grande para ser carregado - "& inputFileSizeMB
+  End If
+ End If
+
+ WMIUsersNum = document.getElementById("WMIUsers").length
+ If WMIUsersNum <=0 then
+  formCheck = false
+  logMsg 1, "Nenhuma credencial especificada"
+ End If 
+  
+ set nRelatorio = document.getElementById("nomeRelatorio")
+ if trim(nRelatorio.value) = "" or formatName(nRelatorio.value) = "" then
+  nRelatorio.value = formatName("Invent HW " & Now())
+ else
+  nRelatorio.value = formatName(nRelatorio.value)
+ end if
+ 
+ if formCheck = false then logMsg 1," - - Existem erros que impedem a execução do relatório - - "
+End Function
+
+Sub geraRelatorio
+ If formCheck() = false then  Exit Sub
+ dGUI=disableGUI(true)
+ setTimeout "runInvent", 1 , "VBScript"
+ logMsg 0," - - Iniciando consulta WMI - - "
+End Sub
+
+Sub runInvent
+ Set objFSO=CreateObject("Scripting.FileSystemObject")
+ Set WMIUsers = document.getElementById("WMIUsers")
+ hostsFile = document.getElementbyId("hosts").value
+ nWMIUsers = WMIUsers.length
+ inventName = document.getElementById("nomeRelatorio").value
+ 
+ Set relFile = objFSO.CreateTextFile(inventName&".csv",True)
+ 'relFile.Write "Machine;Status On/OffLine;Hostname;Dominio;IP / MASK / GW;Sistema Operacional;Service Pack;Fabricante;Modelo;SerialNumber;Qtd. Proc.;Processador;RAM (GB);Serv. Antivirus;WSUS;Admistradores Locais" & vbCrLf
+ relFile.Write "Machine;"& _
+ "Status On/Off Line;"& _
+ "Hostname;"& _
+ "Dominio;"& _
+ "IP / MASK / GW;"& _
+ "Sistema Operacional;"& _
+ "Service Pack;"& _
+ "Fabricante;"& _
+ "Modelo;"& _
+ "SerialNumber;"& _
+ "Qtd. Proc.;"& _
+ "Processador;"& _
+ "RAM (GB);"& _
+ "Antivirus;"& _
+ "WSUS;"& _
+ "Admistradores Locais" & _
+ vbCrLf
+ 
+ 
+ Set hFile = objFSO.OpenTextFile(hostsFile)
+ Do Until hFile.AtEndOfStream
+  strHost = trim(hFile.ReadLine)
+  If strHost <> "" Then
+   For p = 0 to nWMIUsers - 1
+    Set machine = getWMI(strHost,WMIUsers(p).text,Base64Decode(WMIUsers(p).value))
+    cUser = WMIUsers(p).text
+    if machine.Erro <> -2147024891 Then Exit For
+   Next
+   If machine.Erro = 0 Then
+    status="Online("&cUser&")"
+    result=Array(strHost,status, _
+    machine.Hostname, _
+    machine.Dominio, _
+    machine.IPAddress, _
+    machine.SistemaOperacional, _
+    machine.ServicePack, _
+    machine.Fabricante, _
+    machine.Modelo, _
+    machine.SerialNumber, _
+    machine.nCPU, _
+    machine.CPU, _
+    machine.Memoria, _
+    machine.AVS, _
+    machine.WSUS, _
+    machine.Admins)
+	relFile.Write Join(result,";") & vbCrLf
+	logMsg 0, strHost&"="&status
+   Else
+    status=machine.ErroDesc&"("&machine.Erro&")"
+    result=Array(strHost, status)
+    relFile.Write Join(result,";") & vbCrLf
+	logMsg 1, strHost&"="&status
+   End If
+  End If
+ Loop
+ relFile.Close
+ hFile.Close
+ 'disableGUI(false)
+ logMsg 0," - - Consulta WMI finalizada - - "
+ setTimeout "disableGUI(false)", 1 , "VBScript"
+End Sub
+
+
+
+'days=Array("Sun","Mon","Tue","Wed","Thu","Fri","Sat")
+'response.write(Join(days) & "<br>")
+'response.write(Join(days,",") & "<br>")
+'response.write(Join(days," ### "))
+
+
+</script>
+
+
+<style type="text/css">
+body{
+	background-color:white; 
+	font-family:Arial, Helvetica, sans-serif;
+	margin:0px;
+}
+div.main{
+	width: 100%;
+	background-color:#06A;
+	border:solid #06A;
+	overflow:hidden;
+	height: auto;
+}
+div.content{
+	display:block;
+	background-color: white;
+	color: black;
+	padding: 5px;
+}
+span.divTitle{
+	font-size: 22px;
+	text-transform:uppercase;
+	display:block;
+	color: white;
+	font: normal;
+}
+span.bodyTitle{
+	color:#049;
+	font-size: 26px;
+	text-transform:uppercase;
+	display:block;
+	font-weight:bold;
+}
+span.logOut{display:block; overflow:scroll; height: 150px; width:100% ;font-size:12px;}
+span.logOutInfo{display:block; color: black;}
+span.logOutErro{display:block; color: red;}
+.line{width:95%;}
+form{margin:0px}
+input{
+	border: solid #06A 1px;
+	background-color: white;
+	color:#black;
+}
+</style>
+</head>
+<body>
+
+<div class="content">
+<span class="bodyTitle">Inventario de Hardware</span>
+</div>
+<div class="main" title="Lista de maquinas">
+<span class="divTitle">Lista de maquinas</span>
+<div class="content">
+<form id="formHosts">
+<label for="hosts">Arquivo com os Hostnames ou IPs:</label><br />
+<input type="file" id="hosts" class="line" />
+</form>
+</div>
+</div>
+
+<div class="main" title="Credenciais WMI">
+<span class="divTitle">Credenciais WMI</span>
+<div class="content">
+<form id="formWMI">
+Usuário(s) para coleta de informações:<br />
+<label>User: <input type="text" id="WMIUser"/></label>
+<br />
+<label>Pass:<input type="password" id="WMIPass"/></label>
+<input type="button" value="Adicionar" id="WMIAddUser" onClick="addWMIUser"/>
+<select id="WMIUsers" class="line">
+</select>
+<input type="button" value="Remover" id="WMIDelUser" onClick="delWMIUser"/>
+</form>
+</div>
+</div>
+
+<div class="main" title="Relatório">
+<span class="divTitle">Relatório</span>
+<div class="content">
+<form id="formRelatorio">
+<label for="nomeRelatorio">Nome do arquivo de saida:</label><br />
+<input type="text" id="nomeRelatorio" class="line">
+<input type="button" id="runRelatorio" value="Gerar relatório" onClick="geraRelatorio" />
+</form>
+</div>
+</div>
+
+<div class="main" title="Saida / Log">
+<span class="divTitle">Saida / Log</span>
+<div class="content">
+<span class="logOut" id="logOut">
+</span>
+</div>
+</div>
+
+</body>
+</html>
