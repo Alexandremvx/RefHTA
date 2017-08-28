@@ -1,6 +1,6 @@
 'KS 
-wscript.echo "################################## KS ##################################"
-wscript.echo "thread Compreensive collect script to native info gattering"
+'wscript.echo "################################## KS ##################################"
+'wscript.echo "thread Compreensive collect script to native info gattering"
 
 'HV Info schema
 Class objDayLight
